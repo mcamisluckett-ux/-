@@ -43,25 +43,39 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
       return;
     }
 
+    if (selectedIds.length > 20) {
+      toast.warning("选择题目较多，生成 PDF 可能需要较长时间，请耐心等待");
+    }
+
     setIsPrinting(true);
     const toastId = toast.loading("正在生成 PDF，请稍候...");
 
     try {
-      // Wait for the hidden element to be ready
-      await new Promise(resolve => setTimeout(resolve, 800));
+      // Ensure the hidden element is rendered
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       const element = printRef.current;
       if (!element) throw new Error("打印节点未找到");
 
+      // Use a lower scale for better compatibility and performance, especially on mobile
       const canvas = await html2canvas(element, {
-        scale: 2,
+        scale: 1.2, // Further reduced for better mobile stability
         useCORS: true,
         allowTaint: true,
         backgroundColor: "#ffffff",
         logging: false,
+        windowWidth: 800,
+        // Ensure the element is fully captured even if hidden
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.querySelector('[data-print-container]');
+          if (el) {
+            (el as HTMLElement).style.height = 'auto';
+            (el as HTMLElement).style.opacity = '1';
+          }
+        }
       });
       
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const imgData = canvas.toDataURL('image/jpeg', 0.8); 
       const pdf = new jsPDF('p', 'mm', 'a4');
       
       const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -82,13 +96,32 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
         heightLeft -= pdfHeight;
       }
 
-      pdf.save(`错题本_${new Date().getTime()}.pdf`);
+      // Use Blob for better compatibility across mobile browsers
+      const pdfBlob = pdf.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      
+      // For mobile compatibility, especially in WeChat/Safari
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        // On mobile, sometimes opening in a new tab is more reliable
+        window.open(url, '_blank');
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `错题本_${new Date().getTime()}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      
+      // Clean up the URL
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
       toast.dismiss(toastId);
-      toast.success("PDF 已成功下载");
+      toast.success("PDF 已成功生成");
     } catch (error) {
       console.error("PDF Generation Error:", error);
       toast.dismiss(toastId);
-      toast.error("生成 PDF 失败，请检查浏览器权限");
+      toast.error("生成 PDF 失败，建议减少选择题目数量后再试");
     } finally {
       setIsPrinting(false);
     }
@@ -242,7 +275,7 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
       )}
 
       {/* Hidden element for PDF generation */}
-      <div className="fixed left-[-9999px] top-0">
+      <div className="absolute opacity-0 pointer-events-none top-0 left-0 -z-50 overflow-hidden h-0" data-print-container>
         <div ref={printRef} className="w-[800px] bg-white p-12 font-sans text-[#0f172a]">
           <div className="flex items-center gap-3 mb-8 pb-6 border-b-4 border-[#2563eb]">
             <div className="w-8 h-8 bg-[#2563eb] rounded-[4px]" />
