@@ -3,28 +3,28 @@ import { Question, SimilarQuestion } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-export async function performOCR(base64Image: string): Promise<Question> {
+export async function performOCR(base64Image: string, mimeType: string = "image/jpeg"): Promise<Question> {
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
     contents: [
       {
         parts: [
           {
             inlineData: {
-              mimeType: "image/jpeg",
+              mimeType,
               data: base64Image,
             },
           },
           {
             text: `请识别图片中的错题。提取以下信息：
             1. 题目正文 (content)
-            2. 选项 (options) - 如果是选择题
+            2. 选项 (options) - 如果是选择题，请列出所有选项
             3. 标准答案 (answer) - 如果图片中有
             4. 用户原答案 (userAnswer) - 如果图片中有用户手写或勾选的答案
-            5. 题目解析 (explanation)
+            5. 题目解析 (explanation) - 详细解析题目
             6. 核心知识点 (knowledgePoint) - 例如“一元二次方程根的判别式”
             
-            请以 JSON 格式返回。`,
+            请以 JSON 格式返回。确保输出是纯 JSON，不要包含 markdown 代码块标记。`,
           },
         ],
       },
@@ -46,7 +46,11 @@ export async function performOCR(base64Image: string): Promise<Question> {
     },
   });
 
-  const result = JSON.parse(response.text || "{}");
+  let text = response.text || "{}";
+  // Remove potential markdown blocks
+  text = text.replace(/```json\n?|```/g, "").trim();
+  
+  const result = JSON.parse(text);
   return {
     id: Math.random().toString(36).substring(7),
     ...result,

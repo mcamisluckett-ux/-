@@ -5,11 +5,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Printer, Trash2, Eye, FileDown, Loader2, ChevronRight } from "lucide-react";
+import { Printer, Trash2, Eye, FileDown, Loader2, ChevronRight, ArrowLeft, History } from "lucide-react";
 import { NotebookEntry } from '../types';
 import { toast } from "sonner";
-import jsPDF from 'jspdf';
+import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { motion } from 'motion/react';
 
 interface NotebookProps {
   entries: NotebookEntry[];
@@ -19,6 +20,7 @@ interface NotebookProps {
 export default function Notebook({ entries, onDelete }: NotebookProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [viewingEntry, setViewingEntry] = useState<NotebookEntry | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
 
   const toggleSelect = (id: string) => {
@@ -42,50 +44,129 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
     }
 
     setIsPrinting(true);
-    toast.info("正在准备打印文件...");
+    const toastId = toast.loading("正在生成 PDF，请稍候...");
 
     try {
-      // Small delay to ensure the print hidden div is rendered
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for the hidden element to be ready
+      await new Promise(resolve => setTimeout(resolve, 800));
       
       const element = printRef.current;
-      if (!element) return;
+      if (!element) throw new Error("打印节点未找到");
 
       const canvas = await html2canvas(element, {
         scale: 2,
         useCORS: true,
+        allowTaint: true,
+        backgroundColor: "#ffffff",
         logging: false,
       });
       
-      const imgData = canvas.toDataURL('image/png');
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
       
-      let heightLeft = pdfHeight;
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pdfWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      let heightLeft = imgHeight;
       let position = 0;
-      const pageHeight = pdf.internal.pageSize.getHeight();
 
-      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
+      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pdfHeight;
 
-      while (heightLeft >= 0) {
-        position = heightLeft - pdfHeight;
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
         pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pageHeight;
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pdfHeight;
       }
 
-      pdf.save(`错题本_${new Date().toLocaleDateString()}.pdf`);
-      toast.success("PDF 已生成并开始下载");
+      pdf.save(`错题本_${new Date().getTime()}.pdf`);
+      toast.dismiss(toastId);
+      toast.success("PDF 已成功下载");
     } catch (error) {
-      console.error(error);
-      toast.error("生成 PDF 失败");
+      console.error("PDF Generation Error:", error);
+      toast.dismiss(toastId);
+      toast.error("生成 PDF 失败，请检查浏览器权限");
     } finally {
       setIsPrinting(false);
     }
   };
+
+  if (viewingEntry) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="space-y-6 pb-20"
+      >
+        <div className="flex items-center justify-between sticky top-0 z-20 bg-background/80 backdrop-blur-sm py-2">
+          <Button 
+            variant="ghost" 
+            onClick={() => setViewingEntry(null)}
+            className="gap-2 font-bold text-primary hover:bg-primary/5"
+          >
+            <ArrowLeft size={18} /> 返回列表
+          </Button>
+          <div className="geometric-badge">
+            {viewingEntry.originalQuestion.knowledgePoint}
+          </div>
+        </div>
+
+        <div className="space-y-8">
+          <section className="space-y-4">
+            <div className="geometric-label">原错题内容</div>
+            <div className="geometric-card bg-white">
+              <div className="geometric-ocr-text whitespace-pre-wrap leading-relaxed text-[15px]">
+                {viewingEntry.originalQuestion.content}
+              </div>
+              <div className="mt-6 pt-6 border-t-2 border-dashed border-border space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-3 bg-slate-50 rounded-lg">
+                    <p className="text-[11px] font-black text-muted-foreground uppercase mb-1">标准答案</p>
+                    <p className="text-sm font-bold text-foreground">{viewingEntry.originalQuestion.answer}</p>
+                  </div>
+                  <div className="p-3 bg-red-50/50 rounded-lg">
+                    <p className="text-[11px] font-black text-muted-foreground uppercase mb-1">你的答案</p>
+                    <p className="text-sm font-bold text-destructive">{viewingEntry.originalQuestion.userAnswer || '未填写'}</p>
+                  </div>
+                </div>
+                <div className="p-4 bg-primary/5 rounded-lg border-l-4 border-primary">
+                  <p className="text-[11px] font-black text-primary uppercase mb-1">解析说明</p>
+                  <p className="text-sm text-muted-foreground italic leading-relaxed">{viewingEntry.originalQuestion.explanation}</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="geometric-label">举一反三变式练习</div>
+            <div className="grid gap-6">
+              {viewingEntry.similarQuestions.map((q, i) => (
+                <div key={q.id} className="geometric-card bg-slate-50/50 border-l-[4px] border-l-primary/30">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="font-black text-[12px] text-primary/60 uppercase tracking-widest">变式题 0{i + 1}</span>
+                    <span className="text-[11px] text-amber-500 font-black">难度：★★★☆☆</span>
+                  </div>
+                  <p className="text-[15px] leading-relaxed mb-6 text-foreground font-medium">{q.content}</p>
+                  <div className="space-y-4 pt-4 border-t border-border/50">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-primary/10 text-primary text-[10px] font-black px-2 py-0.5 rounded mt-0.5">答案</div>
+                      <p className="text-sm font-bold">{q.answer}</p>
+                    </div>
+                    <div className="geometric-analysis">
+                      <span className="font-black text-primary">易错点拨：</span> {q.commonMistakeAnalysis}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -114,11 +195,15 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
           <p className="text-sm font-medium">暂无错题记录，快去识别第一道错题吧</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-4 pb-20">
           {entries.map((entry) => (
-            <div key={entry.id} className={`geometric-card transition-all relative ${selectedIds.includes(entry.id) ? 'ring-2 ring-primary border-primary' : ''}`}>
+            <div 
+              key={entry.id} 
+              className={`geometric-card transition-all relative group cursor-pointer hover:border-primary/50 ${selectedIds.includes(entry.id) ? 'ring-2 ring-primary border-primary' : ''}`}
+              onClick={() => setViewingEntry(entry)}
+            >
               <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
                   <Checkbox 
                     checked={selectedIds.includes(entry.id)} 
                     onCheckedChange={() => toggleSelect(entry.id)}
@@ -129,56 +214,7 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
                     <p className="text-[11px] text-muted-foreground font-medium">{new Date(entry.createdAt).toLocaleString()}</p>
                   </div>
                 </div>
-                <div className="flex gap-1">
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
-                        <Eye size={18} />
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col p-0 border-none rounded-xl">
-                      <div className="p-6 border-b border-border bg-card shrink-0">
-                        <DialogTitle className="text-xl font-extrabold text-primary">错题详情</DialogTitle>
-                      </div>
-                      <ScrollArea className="flex-1">
-                        <div className="p-6 space-y-8">
-                          <section className="space-y-4">
-                            <div className="geometric-label">原错题</div>
-                            <div className="geometric-ocr-text">
-                              <p className="leading-relaxed">{entry.originalQuestion.content}</p>
-                              <div className="mt-4 pt-4 border-t border-border space-y-2">
-                                <p className="text-[11px] font-bold text-muted-foreground uppercase">标准答案</p>
-                                <p className="text-sm font-medium">{entry.originalQuestion.answer}</p>
-                              </div>
-                            </div>
-                          </section>
-
-                          <section className="space-y-4">
-                            <div className="geometric-label">举一反三变式题</div>
-                            <div className="space-y-4">
-                              {entry.similarQuestions.map((q, i) => (
-                                <div key={q.id} className="geometric-card bg-slate-50/50">
-                                  <div className="flex justify-between mb-2">
-                                    <span className="font-extrabold text-[11px] text-muted-foreground uppercase">变式题 0{i + 1}</span>
-                                  </div>
-                                  <p className="text-sm leading-relaxed mb-4">{q.content}</p>
-                                  <div className="space-y-3">
-                                    <div className="flex items-start gap-2">
-                                      <span className="text-[11px] font-bold text-muted-foreground shrink-0 mt-0.5">答案:</span>
-                                      <p className="text-sm">{q.answer}</p>
-                                    </div>
-                                    <div className="geometric-analysis">
-                                      <b>易错点解析：</b> {q.commonMistakeAnalysis}
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </section>
-                        </div>
-                      </ScrollArea>
-                    </DialogContent>
-                  </Dialog>
+                <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                   <Button 
                     variant="ghost" 
                     size="icon" 
@@ -189,14 +225,16 @@ export default function Notebook({ entries, onDelete }: NotebookProps) {
                   </Button>
                 </div>
               </div>
-              <div className="geometric-ocr-text line-clamp-2 mb-3">
+              <div className="geometric-ocr-text line-clamp-2 mb-3 text-[14px]">
                 {entry.originalQuestion.content}
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground font-bold flex items-center gap-1">
                   <FileDown size={12} /> 包含 3 道变式题
                 </span>
-                <ChevronRight size={16} className="text-muted-foreground" />
+                <div className="flex items-center text-primary text-[12px] font-bold opacity-0 group-hover:opacity-100 transition-opacity">
+                  查看详情 <ChevronRight size={14} />
+                </div>
               </div>
             </div>
           ))}
